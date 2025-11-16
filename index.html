@@ -106,21 +106,43 @@
         // LocalStorage wrapper to mimic window.storage API
         window.storage = {
             get: async (key) => {
-                const value = localStorage.getItem(key);
-                if (value === null) throw new Error('Key not found');
-                return { key, value, shared: false };
+                try {
+                    const value = localStorage.getItem(key);
+                    if (value === null) throw new Error('Key not found');
+                    return { key, value, shared: false };
+                } catch (error) {
+                    console.error('Storage get error:', error);
+                    throw error;
+                }
             },
             set: async (key, value) => {
-                localStorage.setItem(key, value);
-                return { key, value, shared: false };
+                try {
+                    localStorage.setItem(key, value);
+                    console.log('Veri kaydedildi:', key);
+                    return { key, value, shared: false };
+                } catch (error) {
+                    console.error('Storage set error:', error);
+                    alert('Veri kaydedilemedi! Tarayıcı ayarlarınızı kontrol edin.');
+                    return null;
+                }
             },
             delete: async (key) => {
-                localStorage.removeItem(key);
-                return { key, deleted: true, shared: false };
+                try {
+                    localStorage.removeItem(key);
+                    return { key, deleted: true, shared: false };
+                } catch (error) {
+                    console.error('Storage delete error:', error);
+                    return null;
+                }
             },
             list: async (prefix) => {
-                const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
-                return { keys, prefix, shared: false };
+                try {
+                    const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
+                    return { keys, prefix, shared: false };
+                } catch (error) {
+                    console.error('Storage list error:', error);
+                    return { keys: [], prefix, shared: false };
+                }
             }
         };
 
