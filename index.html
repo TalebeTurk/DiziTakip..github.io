@@ -7,6 +7,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>Dizi Takip</title>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -21,6 +26,12 @@
             width: 100%;
             min-height: 100vh;
         }
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
     </style>
 </head>
 <body>
@@ -28,6 +39,29 @@
 
     <script type="text/babel">
         const { useState, useEffect } = React;
+
+        // ⚠️ BURAYA FIREBASE CONFIG BİLGİLERİNİZİ YAPIŞTIRIN
+        const firebaseConfig = {
+         apiKey: "AIzaSyCnmMrVQBQ0rUWixGjsKwAPyIOAE8koOOI",
+    authDomain: "dizi-takip-e54ee.firebaseapp.com",
+    projectId: "dizi-takip-e54ee",
+    storageBucket: "dizi-takip-e54ee.firebasestorage.app",
+    messagingSenderId: "548339098004",
+    appId: "1:548339098004:web:29cab16c7b361609c5ef81"
+        };
+
+        // Firebase'i başlat
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        // Benzersiz cihaz ID'si oluştur (her cihaz için farklı)
+        let deviceId = localStorage.getItem('deviceId');
+        if (!deviceId) {
+            deviceId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('deviceId', deviceId);
+        }
 
         // Lucide Icons Components
         const Plus = ({size = 24, ...props}) => (
@@ -102,49 +136,6 @@
             </svg>
         );
 
-        // LocalStorage wrapper to mimic window.storage API
-        window.storage = {
-            get: async (key) => {
-                try {
-                    const value = localStorage.getItem(key);
-                    if (value === null) throw new Error('Key not found');
-                    return { key, value, shared: false };
-                } catch (error) {
-                    console.error('Storage get error:', error);
-                    throw error;
-                }
-            },
-            set: async (key, value) => {
-                try {
-                    localStorage.setItem(key, value);
-                    console.log('Veri kaydedildi:', key);
-                    return { key, value, shared: false };
-                } catch (error) {
-                    console.error('Storage set error:', error);
-                    alert('Veri kaydedilemedi! Tarayıcı ayarlarınızı kontrol edin.');
-                    return null;
-                }
-            },
-            delete: async (key) => {
-                try {
-                    localStorage.removeItem(key);
-                    return { key, deleted: true, shared: false };
-                } catch (error) {
-                    console.error('Storage delete error:', error);
-                    return null;
-                }
-            },
-            list: async (prefix) => {
-                try {
-                    const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
-                    return { keys, prefix, shared: false };
-                } catch (error) {
-                    console.error('Storage list error:', error);
-                    return { keys: [], prefix, shared: false };
-                }
-            }
-        };
-
         const DAYS = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
 
         function TVSeriesTracker() {
@@ -154,6 +145,7 @@
           const [showAddForm, setShowAddForm] = useState(false);
           const [editingSeries, setEditingSeries] = useState(null);
           const [expandedSeries, setExpandedSeries] = useState({});
+          const [loading, setLoading] = useState(true);
           const [newSeries, setNewSeries] = useState({
             name: '',
             day: 'Pazartesi',
@@ -164,75 +156,118 @@
 
           useEffect(() => {
             loadData();
+            
+            // Gerçek zamanlı dinleyiciler
+            const unsubscribeSeries = db.collection('users').doc(deviceId).collection('series')
+              .onSnapshot((snapshot) => {
+                const seriesData = [];
+                snapshot.forEach((doc) => {
+                  seriesData.push({ ...doc.data(), id: doc.id });
+                });
+                setSeries(seriesData);
+              });
+
+            const unsubscribeWatched = db.collection('users').doc(deviceId).collection('watched')
+              .onSnapshot((snapshot) => {
+                const watchedData = [];
+                snapshot.forEach((doc) => {
+                  watchedData.push({ ...doc.data(), key: doc.id });
+                });
+                setWatchedEpisodes(watchedData);
+              });
+
+            return () => {
+              unsubscribeSeries();
+              unsubscribeWatched();
+            };
           }, []);
 
           const loadData = async () => {
             try {
-              const seriesData = await window.storage.get('tv-series');
-              const watchedData = await window.storage.get('watched-episodes');
+              setLoading(true);
               
-              if (seriesData) {
-                setSeries(JSON.parse(seriesData.value));
-              }
-              if (watchedData) {
-                setWatchedEpisodes(JSON.parse(watchedData.value));
-              }
+              // Dizileri yükle
+              const seriesSnapshot = await db.collection('users').doc(deviceId).collection('series').get();
+              const seriesData = [];
+              seriesSnapshot.forEach((doc) => {
+                seriesData.push({ ...doc.data(), id: doc.id });
+              });
+              setSeries(seriesData);
+
+              // İzlenen bölümleri yükle
+              const watchedSnapshot = await db.collection('users').doc(deviceId).collection('watched').get();
+              const watchedData = [];
+              watchedSnapshot.forEach((doc) => {
+                watchedData.push({ ...doc.data(), key: doc.id });
+              });
+              setWatchedEpisodes(watchedData);
+              
+              setLoading(false);
             } catch (error) {
-              console.log('İlk kullanım, veri yüklenmedi');
+              console.error('Veri yüklenirken hata:', error);
+              alert('Veri yüklenirken hata oluştu. Firebase ayarlarını kontrol edin.');
+              setLoading(false);
             }
           };
 
-          const saveData = async (newSeries, newWatched) => {
-            try {
-              await window.storage.set('tv-series', JSON.stringify(newSeries));
-              await window.storage.set('watched-episodes', JSON.stringify(newWatched));
-            } catch (error) {
-              console.error('Veri kaydedilemedi:', error);
-            }
-          };
-
-          const addSeries = () => {
+          const addSeries = async () => {
             if (!newSeries.name.trim()) return;
             
-            const seriesWithId = {
-              ...newSeries,
-              id: Date.now(),
-              addedDate: new Date().toISOString()
-            };
-            
-            const updatedSeries = [...series, seriesWithId];
-            setSeries(updatedSeries);
-            saveData(updatedSeries, watchedEpisodes);
-            
-            setNewSeries({
-              name: '',
-              day: 'Pazartesi',
-              time: '20:00',
-              channel: '',
-              seasons: [{ number: 1, totalEpisodes: 10 }]
-            });
-            setShowAddForm(false);
+            try {
+              const seriesData = {
+                ...newSeries,
+                addedDate: new Date().toISOString()
+              };
+              
+              await db.collection('users').doc(deviceId).collection('series').add(seriesData);
+              
+              setNewSeries({
+                name: '',
+                day: 'Pazartesi',
+                time: '20:00',
+                channel: '',
+                seasons: [{ number: 1, totalEpisodes: 10 }]
+              });
+              setShowAddForm(false);
+            } catch (error) {
+              console.error('Dizi eklenirken hata:', error);
+              alert('Dizi eklenirken hata oluştu!');
+            }
           };
 
-          const updateSeries = () => {
+          const updateSeries = async () => {
             if (!editingSeries.name.trim()) return;
             
-            const updatedSeries = series.map(s => 
-              s.id === editingSeries.id ? editingSeries : s
-            );
-            setSeries(updatedSeries);
-            saveData(updatedSeries, watchedEpisodes);
-            setEditingSeries(null);
+            try {
+              const { id, ...seriesData } = editingSeries;
+              await db.collection('users').doc(deviceId).collection('series').doc(id).update(seriesData);
+              setEditingSeries(null);
+            } catch (error) {
+              console.error('Dizi güncellenirken hata:', error);
+              alert('Dizi güncellenirken hata oluştu!');
+            }
           };
 
-          const deleteSeries = (id) => {
+          const deleteSeries = async (id) => {
             if (!confirm('Bu diziyi silmek istediğinize emin misiniz?')) return;
             
-            const updatedSeries = series.filter(s => s.id !== id);
-            const updatedWatched = watchedEpisodes.filter(w => w.seriesId !== id);
-            setSeries(updatedSeries);
-            setWatchedEpisodes(updatedWatched);
-            saveData(updatedSeries, updatedWatched);
+            try {
+              // Diziyi sil
+              await db.collection('users').doc(deviceId).collection('series').doc(id).delete();
+              
+              // O diziye ait izlenen bölümleri sil
+              const watchedSnapshot = await db.collection('users').doc(deviceId).collection('watched')
+                .where('seriesId', '==', id).get();
+              
+              const batch = db.batch();
+              watchedSnapshot.forEach((doc) => {
+                batch.delete(doc.ref);
+              });
+              await batch.commit();
+            } catch (error) {
+              console.error('Dizi silinirken hata:', error);
+              alert('Dizi silinirken hata oluştu!');
+            }
           };
 
           const addSeason = (seriesObj, isEditing = false) => {
@@ -256,7 +291,7 @@
             }
           };
 
-          const removeSeason = (seriesObj, seasonIndex, isEditing = false) => {
+          const removeSeason = async (seriesObj, seasonIndex, isEditing = false) => {
             const seasons = seriesObj.seasons || [];
             if (seasons.length <= 1) {
               alert('En az bir sezon olmalıdır!');
@@ -271,11 +306,21 @@
                 seasons: updatedSeasons
               });
               
-              const removedSeason = seasons[seasonIndex];
-              const updatedWatched = watchedEpisodes.filter(w => 
-                !(w.seriesId === seriesObj.id && w.season === removedSeason.number)
-              );
-              setWatchedEpisodes(updatedWatched);
+              // O sezona ait izlenen bölümleri sil
+              try {
+                const removedSeason = seasons[seasonIndex];
+                const watchedSnapshot = await db.collection('users').doc(deviceId).collection('watched')
+                  .where('seriesId', '==', seriesObj.id)
+                  .where('season', '==', removedSeason.number).get();
+                
+                const batch = db.batch();
+                watchedSnapshot.forEach((doc) => {
+                  batch.delete(doc.ref);
+                });
+                await batch.commit();
+              } catch (error) {
+                console.error('Sezon silinirken hata:', error);
+              }
             } else {
               setNewSeries({
                 ...seriesObj,
@@ -305,25 +350,26 @@
             }
           };
 
-          const toggleWatched = (seriesId, season, episode) => {
+          const toggleWatched = async (seriesId, season, episode) => {
             const key = `${seriesId}-${season}-${episode}`;
             const existing = watchedEpisodes.find(w => w.key === key);
             
-            let updatedWatched;
-            if (existing) {
-              updatedWatched = watchedEpisodes.filter(w => w.key !== key);
-            } else {
-              updatedWatched = [...watchedEpisodes, {
-                key,
-                seriesId,
-                season,
-                episode,
-                watchedDate: new Date().toISOString()
-              }];
+            try {
+              if (existing) {
+                // Sil
+                await db.collection('users').doc(deviceId).collection('watched').doc(key).delete();
+              } else {
+                // Ekle
+                await db.collection('users').doc(deviceId).collection('watched').doc(key).set({
+                  seriesId,
+                  season,
+                  episode,
+                  watchedDate: new Date().toISOString()
+                });
+              }
+            } catch (error) {
+              console.error('Bölüm işaretlenirken hata:', error);
             }
-            
-            setWatchedEpisodes(updatedWatched);
-            saveData(series, updatedWatched);
           };
 
           const isWatched = (seriesId, season, episode) => {
@@ -667,12 +713,24 @@
             );
           };
 
+          if (loading) {
+            return (
+              <div className="loading">
+                <div className="text-center">
+                  <div className="text-4xl mb-4">📺</div>
+                  <div className="text-xl font-semibold text-gray-700">Yükleniyor...</div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-50">
               <div className="max-w-2xl mx-auto p-4 pb-24">
                 <div className="text-center mb-6 pt-4">
                   <h1 className="text-3xl font-bold text-gray-800 mb-2">📺 Dizi Takip</h1>
                   <p className="text-gray-600">Dizilerinizi kolayca takip edin</p>
+                  <p className="text-xs text-gray-400 mt-1">Cihaz ID: {deviceId.substr(0, 15)}...</p>
                 </div>
 
                 <div className="flex gap-2 mb-6 bg-white rounded-lg p-1 shadow-sm">
